@@ -61,5 +61,12 @@ namespace TableQuery
             return this.provider.Execute(expression);
         }
     }
-    
+
+    public static class SaraExtensionMethods
+    {
+        public static SaraTableQuery<TElement> AsSaraTableQuery<TElement>(this IQueryable<TElement> query)
+        {
+            return new SaraTableQuery<TElement>(query as DataServiceQuery<TElement>);
+        }
+    }
 }

@@ -141,9 +141,8 @@ namespace TableQuery
         void List(CloudTableClient tables, string tableName)
         {
             var context = GetTableServiceContext(tables);
-            var query = context.CreateQuery<EntityOne>(tableName).AsTableServiceQuery();
+            var query = context.CreateQuery<EntityOne>(tableName).AsSaraTableQuery();
             var q = query.Where(e => e.PartitionKey.CompareTo("00000000") > 0);
-            var tq = q.AsTableServiceQuery();
 
             foreach (var e in q)
             {
