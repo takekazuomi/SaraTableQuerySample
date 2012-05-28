@@ -141,12 +141,12 @@ namespace TableQuery
         void List(CloudTableClient tables, string tableName)
         {
             var context = GetTableServiceContext(tables);
-            var query = context.CreateQuery<EntityOne>(tableName).AsSaraTableQuery();
-            var q = query.Where(e => e.PartitionKey.CompareTo("00000000") > 0);
+            var query1 = context.CreateQuery<KeyOnly>(tableName).AsSaraTableQuery(context.RetryPolicy);
+//            var query2 = query1.Where(e => e.PartitionKey.CompareTo("R") >= 0).Where(e => e.PartitionKey.CompareTo("S") < 0);
 
-            foreach (var e in q)
+            foreach (var e in query1)
             {
-                logger.Info(m => m("{0}\t{1}\t{2}\t{3}", e.PartitionKey, e.RowKey, e.Name, e.Note));
+                logger.Info(m => m("{0}\t{1}\t{2}", e.PartitionKey, e.RowKey, e.Timestamp));
             }
 
         }
@@ -177,7 +177,7 @@ namespace TableQuery
             logger.Info(m=>m("{0}\t{1}", query1 is CloudTableQuery<KeyOnly>, query1.GetType().Name));
                 
             // now DataServiceOrderedQuery
-            var query2 = query1.Where(e => e.PartitionKey.CompareTo("00000000") > 0);
+            var query2 = query1.Where(e => e.PartitionKey.CompareTo("R") >= 0).Where(e => e.PartitionKey.CompareTo("S") < 0);
 
             logger.Info(m => m("{0}\t{1}", query2 is CloudTableQuery<KeyOnly>, query2.GetType().Name));
 
@@ -218,6 +218,13 @@ namespace TableQuery
 
                 var connection = args[2];
                 var tables = CloudStorageAccount.Parse(connection).CreateCloudTableClient();
+
+                tables.RetryPolicy = SaraRetryPolicies.RetryExponential(RetryPolicies.DefaultClientRetryCount,
+                    RetryPolicies.DefaultMinBackoff,
+                    RetryPolicies.DefaultMaxBackoff,
+                    RetryPolicies.DefaultClientBackoff
+                    );
+
 
                 var program = new Program();
                 switch (args[0])
