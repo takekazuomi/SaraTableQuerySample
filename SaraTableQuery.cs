@@ -6,31 +6,68 @@ using Microsoft.WindowsAzure.StorageClient;
 using System.Data.Services.Client;
 using System.Linq.Expressions;
 using Common.Logging;
+using System.Collections;
 
 
 namespace TableQuery
 {
-    public class SaraTableQuery<T> : CloudTableQuery<T>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Microsoft.Naming",
+        "CA1710:IdentifiersShouldHaveCorrectSuffix",
+        Justification = "The intent is to mirror the name of the DataServiceQuery type.")]
+    public class SaraTableQuery<T> : IQueryable<T>
     {
-        /*
-         * public SaraTableQuery(DataServiceQuery<T> query)
-                    : base(query, RetryPolicies.RetryExponential(3, TimeSpan.FromSeconds(2)))
-                {
-                }
-        */
+        private CloudTableQuery<T> query;
 
-        public SaraTableQuery(DataServiceQuery<T> query, RetryPolicy policy)
-            : base(query, policy)
+
+       public SaraTableQuery(DataServiceQuery<T> query, RetryPolicy policy)
         {
+            this.query = new CloudTableQuery<T>(query, policy);
         }
 
-        public new IQueryProvider Provider
+        public IQueryProvider Provider
         {
             get
             {
-                return new SaraQueryProvider(base.Provider);
+                return new SaraQueryProvider(query.Provider);
             }
         }
+
+        public IEnumerator GetEnumerator()
+        {
+            return query.GetEnumerator();
+        }
+
+        IEnumerator<T> IEnumerable<T>.GetEnumerator()
+        {
+            return query.GetEnumerator();
+        }
+
+        public Type ElementType
+        {
+            get {
+                return query.ElementType;
+            }
+        }
+
+        public Expression Expression
+        {
+            get {
+                return query.Expression;
+            }
+        }
+
+        public IEnumerable<T> Execute()
+        {
+            return query.Execute();
+        }
+
+
+        public IEnumerable<T> Execute(ResultContinuation continuationToken)
+        {
+            return query.Execute(continuationToken);
+        }
+
     }
 
 
@@ -46,7 +83,7 @@ namespace TableQuery
 
         public IQueryable<T> CreateQuery<T>(Expression expression)
         {
-            return this.provider.CreateQuery<T>(expression).AsTableServiceQuery<T>();
+            return this.provider.CreateQuery<T>(expression).AsSaraTableQuery<T>(SaraRetryPolicies.DefaultRetry);
         }
 
         public IQueryable CreateQuery(Expression expression)
@@ -69,8 +106,21 @@ namespace TableQuery
     {
         public static SaraTableQuery<TElement> AsSaraTableQuery<TElement>(this IQueryable<TElement> query, RetryPolicy retry)
         {
-            return new SaraTableQuery<TElement>(query as DataServiceQuery<TElement>, retry);
+            var query1 = query as SaraTableQuery<TElement>;
+            if (query1 != null)
+            {
+                return query1;
+            }
+
+            var query2 = query as DataServiceQuery<TElement>;
+            if (query2 != null)
+            {
+                return new SaraTableQuery<TElement>(query2, retry);
+            }
+
+            throw new ArgumentException("only SaraTableQuery and DataServiceQuery acceptable","query");
         }
+
     }
 
     /*
@@ -83,14 +133,15 @@ namespace TableQuery
     {
         static readonly ILog logger = LogManager.GetCurrentClassLogger();
 
+        public static readonly RetryPolicy DefaultRetry = SaraRetryPolicies.RetryExponential(RetryPolicies.DefaultClientRetryCount,
+                    RetryPolicies.DefaultMinBackoff,
+                    RetryPolicies.DefaultMaxBackoff,
+                    RetryPolicies.DefaultClientBackoff
+                    );
+
+
         public static RetryPolicy RetryExponential(int retryCount, TimeSpan minBackoff, TimeSpan maxBackoff, TimeSpan deltaBackoff)
         {
-/*
- * CommonUtils.AssertInBounds("currentRetryCount", retryCount, 0, int.MaxValue);
- * CommonUtils.AssertInBounds("minBackoff", minBackoff, TimeSpan.Zero, TimeSpan.MaxValue);
-            CommonUtils.AssertInBounds("maxBackoff", maxBackoff, TimeSpan.Zero, TimeSpan.MaxValue);
-            CommonUtils.AssertInBounds("deltaBackoff", deltaBackoff, TimeSpan.Zero, TimeSpan.MaxValue);
-*/ 
 
             return () =>
             {

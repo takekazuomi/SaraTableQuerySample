@@ -44,12 +44,20 @@ namespace TableQuery
             this.PartitionKey = partitionKey;
             this.RowKey = rowKey;
         }
+
+        public DateTime Deleted
+        {
+            get;
+            set;
+        }
+
     }
 
 
     partial class Program
     {
         static readonly ILog logger = LogManager.GetCurrentClassLogger();
+
         EntityOne[] data = new[] {
             new EntityOne("001","000","赤い", "アップル"),
             new EntityOne("001","001","赤い", "オラクル"),
@@ -72,16 +80,21 @@ namespace TableQuery
             }
         }
 
+        HttpWebRequest lastRequest;
+
         TableServiceContext GetTableServiceContext(CloudTableClient tables)
         {
             var context = tables.GetDataServiceContext();
+            context.MergeOption = MergeOption.NoTracking;
 
             context.SendingRequest += (sender, args) =>
             {
                 var request = args.Request as HttpWebRequest;
                 request.Headers["x-ms-version"] = "2011-08-18";
                 logger.Info(request.RequestUri);
+                lastRequest = request;
             };
+
 
             return context;
         }
@@ -119,7 +132,7 @@ namespace TableQuery
                 {
                     context.SaveChangesWithRetries(option);
                     Console.WriteLine("{0}", i);
-                }                
+                }
 
             }
         }
@@ -138,18 +151,126 @@ namespace TableQuery
 
         }
 
+        private ContinuationToken GetTableContinuationFromResponse(WebResponse response)
+        {
+            var np = "";
+            var nr = "";
+
+            np = response.Headers.Get("x-ms-continuation-NextPartitionKey");
+            nr = response.Headers.Get("x-ms-continuation-NextRowKey");
+
+            ContinuationToken token = null;
+
+            if (np != null || nr != null)
+            {
+                token = new ContinuationToken()
+                {
+                    NextPartitionKey = np,
+                    NextRowKey = nr
+                };
+            }
+            return token;
+        }
+
+
         void List(CloudTableClient tables, string tableName)
         {
+            var lastRowKey = "";
+            var lastPartitionKey = "";
+            var count = 0;
+
             var context = GetTableServiceContext(tables);
-            var query1 = context.CreateQuery<KeyOnly>(tableName).AsSaraTableQuery(context.RetryPolicy);
-//            var query2 = query1.Where(e => e.PartitionKey.CompareTo("R") >= 0).Where(e => e.PartitionKey.CompareTo("S") < 0);
+
+            var query1 = context.CreateQuery<KeyOnly>(tableName).AsSaraTableQuery(context.RetryPolicy).AsQueryable();
+
+            // take should be last 
+            query1 = query1.Take(10000000);
 
             foreach (var e in query1)
             {
-                logger.Info(m => m("{0}\t{1}\t{2}", e.PartitionKey, e.RowKey, e.Timestamp));
+                count++;
+                if (lastPartitionKey != e.PartitionKey)
+                {
+                    logger.Info(m => m("Start New PartitionKey:\t{0}", e.PartitionKey));
+                }
+                logger.Info(m => m("DATA:\t{0}\t{1}\t{2}\t{3}", e.PartitionKey, e.RowKey, e.Timestamp, e.Deleted));
+                lastPartitionKey = e.PartitionKey;
+                lastRowKey = e.RowKey;
             }
 
         }
+
+
+        void List1(CloudTableClient tables, string tableName)
+        {
+            var hasData = true;
+            var lastRowKey = "";
+            var lastPartitionKey = "";
+            var count = 0;
+
+            while (hasData)
+            {
+                var context = GetTableServiceContext(tables);
+
+                var query1 = context.CreateQuery<KeyOnly>(tableName).AsSaraTableQuery(context.RetryPolicy).AsQueryable();
+
+                if (!String.IsNullOrEmpty(lastRowKey))
+                    query1 = query1.Where(e => e.PartitionKey.CompareTo(lastPartitionKey) >= 0)
+                        .Where(e => e.RowKey.CompareTo(lastRowKey) > 0);
+
+                // take should be last 
+                query1 = query1.Take(100000);
+
+                hasData = false;
+                foreach (var e in query1)
+                {
+                    count++;
+                    hasData = true;
+                    if (lastPartitionKey != e.PartitionKey)
+                    {
+                        logger.Info(m => m("Start New PartitionKey:\t{0}", e.PartitionKey));
+                    }
+                    logger.Info(m => m("DATA:\t{0}\t{1}\t{2}\t{3}", e.PartitionKey, e.RowKey, e.Timestamp, e.Deleted));
+                    lastPartitionKey = e.PartitionKey;
+                    lastRowKey = e.RowKey;
+                }
+
+            }
+
+        }
+
+        void List2(CloudTableClient tables, string tableName)
+        {
+            var hasData = true;
+            var nextRowKey = "";
+            var count = 0;
+
+            while (hasData)
+            {
+                var context = GetTableServiceContext(tables);
+
+                var query1 = context.CreateQuery<KeyOnly>(tableName).AsSaraTableQuery(context.RetryPolicy)
+                    .Where(e => e.PartitionKey == "2520707516983831262-95b8ceee1e0d4c22b9cb04a2e9a9d6da");
+
+                if (!String.IsNullOrEmpty(nextRowKey))
+                    query1 = query1.Where(e => e.RowKey.CompareTo(nextRowKey) > 0);
+
+                // take should be last 
+                query1 = query1.Take(100000);
+
+                hasData = false;
+                foreach (var e in query1)
+                {
+                    count++;
+                    hasData = true;
+                    logger.Info(m => m("DATA:\t{0}\t{1}\t{2}\t{3}", e.PartitionKey, e.RowKey, e.Timestamp, e.Deleted));
+                    nextRowKey = e.RowKey;
+                }
+
+            }
+
+        }
+
 
         void Update(CloudTableClient tables, string tableName)
         {
@@ -174,15 +295,16 @@ namespace TableQuery
             // query is instance of CloudTableQuery
             var query1 = context.CreateQuery<KeyOnly>(tableName).AsTableServiceQuery();
 
-            logger.Info(m=>m("{0}\t{1}", query1 is CloudTableQuery<KeyOnly>, query1.GetType().Name));
-                
+            logger.Info(m => m("{0}\t{1}", query1 is CloudTableQuery<KeyOnly>, query1.GetType().Name));
+
             // now DataServiceOrderedQuery
             var query2 = query1.Where(e => e.PartitionKey.CompareTo("R") >= 0).Where(e => e.PartitionKey.CompareTo("S") < 0);
 
             logger.Info(m => m("{0}\t{1}", query2 is CloudTableQuery<KeyOnly>, query2.GetType().Name));
 
-            foreach(var e in query2) {
-//                logger.Info(m => m("{0}\t{1}", e.PartitionKey, e.RowKey));
+            foreach (var e in query2)
+            {
+                //                logger.Info(m => m("{0}\t{1}", e.PartitionKey, e.RowKey));
             }
 
 
@@ -190,12 +312,13 @@ namespace TableQuery
                          where e.PartitionKey.CompareTo("0") >= 0
                          select e;
 
-            foreach(var e in query3) {
+            foreach (var e in query3)
+            {
                 logger.Info(m => m("{0}\t{1}", e.PartitionKey, e.RowKey));
             }
 
 
-                         
+
         }
 
         /// <summary>
@@ -275,6 +398,16 @@ namespace TableQuery
             }
 
         }
+    }
+
+    public class ContinuationToken
+    {
+        public ContinuationToken()
+        {
+        }
+
+        public string NextPartitionKey;
+        public string NextRowKey;
     }
 }
 
